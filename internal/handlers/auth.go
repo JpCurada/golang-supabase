@@ -30,17 +30,17 @@ func NewAuthHandler(db *sql.DB, mailer *email.Mailer, jwtSecret string) *AuthHan
     }
 }
 
-// Register a new user
-// @Summary Register a new user
-// @Description Register a new user with email, password, and details
+// Register godoc
+// @Summary Register new user
+// @Description Register a new user with email verification
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param request body models.RegisterRequest true "User registration payload"
-// @Success 201 {object} models.AuthResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 409 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
+// @Param request body models.RegisterRequest true "Registration credentials"
+// @Success 201 {object} models.AuthResponse "Successfully registered"
+// @Failure 400 {object} ErrorResponse "Invalid input"
+// @Failure 409 {object} ErrorResponse "Email already exists"
+// @Failure 500 {object} ErrorResponse "Server error"
 // @Router /api/v1/auth/register [post]
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
     var input models.RegisterRequest
@@ -54,7 +54,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Start transaction
     tx, err := h.db.Begin()
     if err != nil {
         ErrorJSON(w, http.StatusInternalServerError, "Database error")
@@ -62,7 +61,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
     }
     defer tx.Rollback()
 
-    // Check if email exists
+    // Check for existing email
     var exists bool
     err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM user_credentials WHERE email = $1)", input.Email).Scan(&exists)
     if err != nil {
@@ -81,7 +80,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Generate verification token
     verificationToken := uuid.New()
     expiresAt := time.Now().Add(24 * time.Hour)
 
@@ -114,31 +112,41 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Send verification email
+    // Send verification email asynchronously
     go h.mailer.SendVerificationEmail(input.Email, input.FirstName, verificationToken.String())
+
+    // Generate initial JWT token
+    token, err := auth.GenerateToken(userID, input.Email, h.jwtSecret)
+    if err != nil {
+        ErrorJSON(w, http.StatusInternalServerError, "Error generating token")
+        return
+    }
 
     JSON(w, http.StatusCreated, models.AuthResponse{
         User: &models.User{
-            ID:           userID,
-            FirstName:    input.FirstName,
-            LastName:     input.LastName,
+            ID:            userID,
+            FirstName:     input.FirstName,
+            LastName:      input.LastName,
             StudentNumber: input.StudentNumber,
-            Email:        input.Email,
+            Email:         input.Email,
+            EmailVerified: false,
         },
+        Token: token,
     })
 }
 
-
-// @Summary Login user
+// Login godoc
+// @Summary Authenticate user
 // @Description Authenticate user and return JWT token
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param request body models.LoginRequest true "User login payload"
-// @Success 200 {object} models.AuthResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 401 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
+// @Param request body models.LoginRequest true "Login credentials"
+// @Success 200 {object} models.AuthResponse "Successfully authenticated"
+// @Failure 400 {object} ErrorResponse "Invalid input"
+// @Failure 401 {object} ErrorResponse "Invalid credentials"
+// @Failure 403 {object} ErrorResponse "Email not verified"
+// @Failure 500 {object} ErrorResponse "Server error"
 // @Router /api/v1/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
     var input models.LoginRequest
@@ -185,7 +193,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Generate JWT token
     token, err := auth.GenerateToken(user.ID, user.Email, h.jwtSecret)
     if err != nil {
         ErrorJSON(w, http.StatusInternalServerError, "Error generating token")
@@ -198,15 +205,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
     })
 }
 
-// @Summary Verify email
-// @Description Verify user email via token
+// VerifyEmail godoc
+// @Summary Verify email address
+// @Description Verify user's email address using verification token
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param token query string true "Verification token"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
+// @Param token query string true "Verification token" Format(uuid)
+// @Success 200 {object} models.SuccessResponse "Email verified"
+// @Failure 400 {object} ErrorResponse "Invalid token"
+// @Failure 500 {object} ErrorResponse "Server error"
 // @Router /api/v1/auth/verify-email [get]
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
     token := r.URL.Query().Get("token")
@@ -240,24 +248,24 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    JSON(w, http.StatusOK, map[string]string{"message": "Email verified successfully"})
+    JSON(w, http.StatusOK, models.SuccessResponse{
+        Message: "Email verified successfully",
+    })
 }
 
+// ForgotPassword godoc
 // @Summary Request password reset
-// @Description Send password reset link to email
+// @Description Send password reset link to user's email
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param request body models.PasswordResetRequest true "Password reset request"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
+// @Success 200 {object} models.SuccessResponse "Reset email sent"
+// @Failure 400 {object} ErrorResponse "Invalid input"
+// @Failure 500 {object} ErrorResponse "Server error"
 // @Router /api/v1/auth/forgot-password [post]
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
-    var input struct {
-        Email string `json:"email" validate:"required,email"`
-    }
-
+    var input models.PasswordResetRequest
     if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
         ErrorJSON(w, http.StatusBadRequest, "Invalid request payload")
         return
@@ -271,7 +279,6 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
     resetToken := uuid.New()
     expiresAt := time.Now().Add(1 * time.Hour)
 
-    // Get user's name first
     var firstName string
     err := h.db.QueryRow(`
         SELECT u.first_name
@@ -304,33 +311,27 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
     }
 
     if rowsAffected > 0 {
-        // Pass the first name to the email function
         go h.mailer.SendPasswordResetEmail(input.Email, firstName, resetToken.String())
     }
 
-    // Always return success to prevent email enumeration
-    JSON(w, http.StatusOK, map[string]string{
-        "message": "If an account exists with that email, a password reset link has been sent",
+    JSON(w, http.StatusOK, models.SuccessResponse{
+        Message: "If an account exists with that email, a password reset link has been sent",
     })
 }
 
-// @Summary Reset user password
-// @Description Reset password using provided token
+// ResetPassword godoc
+// @Summary Reset password
+// @Description Reset user's password using reset token
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param request body models.PasswordUpdateRequest true "Password reset payload"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
+// @Param request body models.PasswordUpdateRequest true "Password update request"
+// @Success 200 {object} models.SuccessResponse "Password reset successful"
+// @Failure 400 {object} ErrorResponse "Invalid input or token"
+// @Failure 500 {object} ErrorResponse "Server error"
 // @Router /api/v1/auth/reset-password [post]
 func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
-    var input struct {
-        Token           string `json:"token" validate:"required"`
-        Password        string `json:"password" validate:"required,min=8"`
-        ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password"`
-    }
-
+    var input models.PasswordUpdateRequest
     if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
         ErrorJSON(w, http.StatusBadRequest, "Invalid request payload")
         return
@@ -341,7 +342,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    hashedPassword, err := auth.HashPassword(input.Password)
+    hashedPassword, err := auth.HashPassword(input.NewPassword)
     if err != nil {
         ErrorJSON(w, http.StatusInternalServerError, "Error processing password")
         return
@@ -349,42 +350,44 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
     tx, err := h.db.Begin()
     if err != nil {
-        ErrorJSON(w, http.StatusInternalServerError, "Database error")
-        return
-    }
-    defer tx.Rollback()
-
-    result, err := tx.Exec(`
-        UPDATE user_credentials 
-        SET password_hash = $1,
-            reset_token = NULL,
-            reset_token_expires_at = NULL
-        WHERE reset_token = $2
-        AND reset_token_expires_at > NOW()
-    `, hashedPassword, input.Token)
-
-    if err != nil {
-        ErrorJSON(w, http.StatusInternalServerError, "Database error")
-        return
-    }
-
-    rowsAffected, err := result.RowsAffected()
-    if err != nil {
-        ErrorJSON(w, http.StatusInternalServerError, "Database error")
-        return
-    }
-
-    if rowsAffected == 0 {
-        ErrorJSON(w, http.StatusBadRequest, "Invalid or expired reset token")
-        return
-    }
-
-    if err = tx.Commit(); err != nil {
-        ErrorJSON(w, http.StatusInternalServerError, "Database error")
-        return
-    }
-
-    JSON(w, http.StatusOK, map[string]string{
-        "message": "Password has been reset successfully",
-    })
-}
+			ErrorJSON(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+		defer tx.Rollback()
+	
+		result, err := tx.Exec(`
+			UPDATE user_credentials 
+			SET password_hash = $1,
+				reset_token = NULL,
+				reset_token_expires_at = NULL
+			WHERE reset_token = $2
+			AND reset_token_expires_at > NOW()
+		`, hashedPassword, input.Token)
+	
+		if err != nil {
+			ErrorJSON(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+	
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			ErrorJSON(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+	
+		if rowsAffected == 0 {
+			ErrorJSON(w, http.StatusBadRequest, "Invalid or expired reset token")
+			return
+		}
+	
+		if err = tx.Commit(); err != nil {
+			ErrorJSON(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+	
+		JSON(w, http.StatusOK, models.SuccessResponse{
+			Message: "Password has been reset successfully",
+		})
+	}
+	
+	
