@@ -30,6 +30,18 @@ func NewAuthHandler(db *sql.DB, mailer *email.Mailer, jwtSecret string) *AuthHan
     }
 }
 
+// Register a new user
+// @Summary Register a new user
+// @Description Register a new user with email, password, and details
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body models.RegisterRequest true "User registration payload"
+// @Success 201 {object} models.AuthResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 409 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/auth/register [post]
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
     var input models.RegisterRequest
     if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -116,6 +128,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
     })
 }
 
+
+// @Summary Login user
+// @Description Authenticate user and return JWT token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body models.LoginRequest true "User login payload"
+// @Success 200 {object} models.AuthResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
     var input models.LoginRequest
     if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -174,6 +198,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
     })
 }
 
+// @Summary Verify email
+// @Description Verify user email via token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param token query string true "Verification token"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/auth/verify-email [get]
 func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
     token := r.URL.Query().Get("token")
     if token == "" {
@@ -209,6 +243,16 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
     JSON(w, http.StatusOK, map[string]string{"message": "Email verified successfully"})
 }
 
+// @Summary Request password reset
+// @Description Send password reset link to email
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body models.PasswordResetRequest true "Password reset request"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/auth/forgot-password [post]
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
     var input struct {
         Email string `json:"email" validate:"required,email"`
@@ -270,6 +314,16 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
     })
 }
 
+// @Summary Reset user password
+// @Description Reset password using provided token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body models.PasswordUpdateRequest true "Password reset payload"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/auth/reset-password [post]
 func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
     var input struct {
         Token           string `json:"token" validate:"required"`

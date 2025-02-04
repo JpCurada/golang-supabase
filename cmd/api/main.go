@@ -17,6 +17,8 @@ import (
     "github.com/JpCurada/golang-supabase/internal/middleware"
     "github.com/go-chi/chi/v5"
     chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/swaggo/http-swagger"
+    _ "github.com/JpCurada/golang-supabase/docs" // Import Swagger docs
 )
 
 func main() {
@@ -43,6 +45,8 @@ func main() {
     r.Use(chimiddleware.Logger)
     r.Use(chimiddleware.Recoverer)
     r.Use(middleware.CSRF)
+
+	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
     // Initialize handlers
     authHandler := handlers.NewAuthHandler(db, mailer, cfg.JWTSecret)
