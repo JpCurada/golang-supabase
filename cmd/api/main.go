@@ -19,7 +19,12 @@ import (
     chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/swaggo/http-swagger"
     _ "github.com/JpCurada/golang-supabase/docs" // Import Swagger docs
+	"github.com/go-chi/cors"
 )
+
+
+
+
 
 func main() {
     // Load configuration
@@ -41,10 +46,23 @@ func main() {
     // Initialize router
     r := chi.NewRouter()
 
+	if os.Getenv("ENV") == "production" { 
+		r.Use(middleware.CSRF) // Enable CSRF only in production
+	}
+
+	// Inside main() function, before defining routes
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"}, // Allow all origins
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"X-CSRF-Token"}, // Allow client to read CSRF token
+		AllowCredentials: true,
+		MaxAge:           300, // Maximum value for preflight request cache
+	}))
+
     // Apply middleware
     r.Use(chimiddleware.Logger)
     r.Use(chimiddleware.Recoverer)
-    r.Use(middleware.CSRF)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
@@ -56,7 +74,7 @@ func main() {
         r.Route("/auth", func(r chi.Router) {
             r.Post("/register", authHandler.Register)
             r.Post("/login", authHandler.Login)
-            r.Post("/verify-email", authHandler.VerifyEmail)
+            r.Get("/verify-email", authHandler.VerifyEmail)
             r.Post("/forgot-password", authHandler.ForgotPassword)
             r.Post("/reset-password", authHandler.ResetPassword)
         })
